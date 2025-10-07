@@ -1,8 +1,47 @@
-import numpy as np
+import sys
 import time
 
 from lys_instr import MultiMotorInterface
 from lys.Qt import QtWidgets, QtCore
+
+
+class _ValueInfo(QtCore.QObject):
+    def __init__(self, speed):
+        super().__init__()
+        self._position = 0
+        self._speed = speed
+        self._target = None
+        self.error = False
+
+    def set(self, target):
+        self._before = self._position
+        self._target = target
+        self._timing = time.perf_counter()
+
+    def _update(self):
+        if self._target is None:
+            return
+        d = self._target - self._before
+        t = (time.perf_counter() - self._timing)/abs(d/self._speed+sys.float_info.epsilon)
+        if t >= 1:
+            self._position = self._target
+            self._target = None
+        else:
+            self._position = self._before + d * t
+
+    def stop(self):
+        self._update()
+        self._target = None
+
+    @property
+    def busy(self):
+        self._update()
+        return self._target is not None
+    
+    @property
+    def position(self):
+        self._update()
+        return self._position
 
 
 class MultiMotorDummy(MultiMotorInterface):
@@ -12,7 +51,7 @@ class MultiMotorDummy(MultiMotorInterface):
     This class simulates a multi-axis motor controller, including axis positions, busy/alive state management, and per-axis error injection for testing purposes.
     """
 
-    def __init__(self, *axisNamesAll, **kwargs):
+    def __init__(self, *axisNamesAll, speed=0.2, **kwargs):
         """
         Initializes the dummy multi-axis motor with the given axis names.
 
@@ -26,24 +65,8 @@ class MultiMotorDummy(MultiMotorInterface):
             **kwargs: Additional keyword arguments passed to the parent class.
         """
         super().__init__(*axisNamesAll, **kwargs)
-        n = len(self.nameList)
-        self.__position = np.zeros(n)
-        self.__timing = np.full(n, np.nan)
-        self.__target = np.full(n, np.nan)
-        self.__before = np.zeros(n)
-        self.__signs = np.zeros(n)
-        self._speed = 0.2
-        self._error = np.full(n, False)
+        self._data = {name: _ValueInfo(speed) for name in self.nameList}
         self.start()
-
-    def _time(self):
-        """
-        Returns the current monotonic time in seconds with high precision.
-
-        Returns:
-            float: Monotonic time in seconds.
-        """
-        return time.perf_counter()
 
     def _set(self, **target):
         """
@@ -54,9 +77,9 @@ class MultiMotorDummy(MultiMotorInterface):
         Args:
             target (dict[str, float]): Mapping of axis names to their target positions.
         """
-        self.__before = self.get(type=np.ndarray)
-        self.__timing = np.full(len(self.nameList), self._time())
-        self.__target = np.array([target[name] if name in target else np.nan for name in self.nameList])
+        for name, d in self._data.items():
+            if name in target:
+                d.set(target[name])
 
     def _get(self):
         """
@@ -68,41 +91,14 @@ class MultiMotorDummy(MultiMotorInterface):
         Returns:
             dict[str, float]: Mapping of axis names to their current positions.
         """
-        val = {}
-
-        # When axes are dead
-        for i, name in enumerate(self.nameList):
-            if self._error[i]:
-                self._info[name].alive = False
-            else:
-                self._info[name].alive = True
-
-        # When axes are at rest
-        if np.all(np.isnan(self.__timing)):
-            for i, name in enumerate(self.nameList):
-                if name not in val:
-                    val[name] = self.__position[i]
-            return val
-
-        # When axes are moving
-        self.__signs = np.sign(self.__target - self.__before)
-        now = self._time()
-        movingIndices = np.where(~np.isnan(self.__target) & ~np.isnan(self.__timing))[0]
-        self.__position[movingIndices] = self.__before[movingIndices] + self.__signs[movingIndices] * self._speed * (now - self.__timing[movingIndices])
-        for i in movingIndices:
-            if np.sign(self.__position - self.__target)[i] == self.__signs[i]:
-                self.__position[i] = self.__target[i]
-                self.__timing[i] = np.nan
-        for i, name in enumerate(self.nameList):
-            if name not in val:
-                val[name] = float(self.__position[i])
-        return val
+        return {name: d.position for name, d in self._data.items()}
 
     def _stop(self):
         """
         Stops all axes in the dummy motor by clearing their timing information.
         """
-        self.__timing = np.full(len(self.nameList), np.nan)
+        for d in self._data.values():
+            d.stop()
 
     def _isBusy(self):
         """
@@ -111,8 +107,7 @@ class MultiMotorDummy(MultiMotorInterface):
         Returns:
             dict[str, bool]: Mapping of axis names to busy states.
         """
-        bs = (~np.isnan(self.__timing) & ~np.isnan(self.__target)).astype(bool)
-        return {name: bs[i] for i, name in enumerate(self.nameList)}
+        return {name: d.busy for name, d in self._data.items()}
 
     def _isAlive(self):
         """
@@ -121,7 +116,7 @@ class MultiMotorDummy(MultiMotorInterface):
         Returns:
             dict[str, bool]: Mapping of axis names to alive states.
         """
-        return {name: not self._error[i] for i, name in enumerate(self.nameList)}
+        return {name: not d.error for name, d in self._data.items()}
 
     def settingsWidget(self):
         """

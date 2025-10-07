@@ -1,8 +1,6 @@
 import logging
-import time
 
 from lys.Qt import QtCore
-
 from .Interfaces import HardwareInterface
 
 
@@ -76,6 +74,7 @@ class DetectorInterface(HardwareInterface):
     def __init__(self, exposure=1, **kwargs):
         super().__init__(**kwargs)
         self._exposure = exposure
+        self._mutex = QtCore.QMutex()
         self._busy = False
 
     def _loadState(self):
@@ -109,7 +108,7 @@ class DetectorInterface(HardwareInterface):
         if self._busy:
             logging.warning("Detector is busy. Cannot start new acquisition.")
             return
-
+        
         self._busy = True
         self.busyStateChanged.emit(True)
 
@@ -134,11 +133,12 @@ class DetectorInterface(HardwareInterface):
 
         Resets the acquisition thread reference, updates the busy state, and emits the ``busyStateChanged`` signal to notify listeners.
         """
-        self._busy = False
-        self.busyStateChanged.emit(False)
-        self._thread = None
+        with QtCore.QMutexLocker(self._mutex):
+            self._busy = False
+            self.busyStateChanged.emit(False)
+            self._thread = None
 
-    def waitForReady(self, interval=0.1):
+    def waitForReady(self):
         """
         Blocks further interaction until the device is no longer busy.
 
@@ -148,11 +148,17 @@ class DetectorInterface(HardwareInterface):
         Returns:
             bool: True once all axes become idle.
         """
-        while True:
-            if self.isBusy:
-                time.sleep(interval)
-            else:
-                return True
+        loop = QtCore.QEventLoop()
+
+        def on_busy_changed(b):
+            if not b and loop.isRunning():
+                loop.quit()
+
+        with QtCore.QMutexLocker(self._mutex):
+            if self._busy is False:
+                return
+            self.busyStateChanged.connect(on_busy_changed, QtCore.Qt.QueuedConnection)
+        loop.exec_()
 
     def stop(self):
         """
@@ -177,7 +183,7 @@ class DetectorInterface(HardwareInterface):
             float or None: The exposure time
         """
         return self._exposure
-
+    
     @exposure.setter
     def exposure(self, value):
         """
@@ -199,7 +205,7 @@ class DetectorInterface(HardwareInterface):
             bool: True if the detector is busy, False otherwise.
         """
         return self._busy
-
+    
     @property
     def isAlive(self):
         """
@@ -211,7 +217,7 @@ class DetectorInterface(HardwareInterface):
             bool: True if the detector is alive, False otherwise.
         """
         return self._isAlive()
-
+    
     def _get(self):
         """
         Should be implemented in subclasses to provide device-specific logic for getting acquired data.
@@ -236,7 +242,7 @@ class DetectorInterface(HardwareInterface):
     def _isAlive(self):
         """
         Should be implemented in subclasses to provide device-specific logic for returning alive state.
-
+        
         Raises:
             NotImplementedError: If the subclass does not implement this method.
         """
@@ -248,7 +254,7 @@ class DetectorInterface(HardwareInterface):
 
         Args:
             iter(int): Number of iterations. -1 means continuous run.
-
+        
         Raises:
             NotImplementedError: If the subclass does not implement this method.
         """
@@ -262,12 +268,12 @@ class DetectorInterface(HardwareInterface):
 
         Returns:
             QDialog: The settings dialog.
-
+        
         Raises:
             NotImplementedError: If the subclass does not implement this method.
         """
         raise NotImplementedError("Subclasses must implement this method.")
-
+    
 
 class MultiDetectorInterface(DetectorInterface):
     """
@@ -292,20 +298,20 @@ class MultiDetectorInterface(DetectorInterface):
     @property
     def frameDim(self):
         """
-        The dimensions for the single data.
+        The number of dimensions for a single frame of data.
 
         Returns:
-            tuple: Dimensions for indexing acquired data.
+            int: Number of dimensions for a single frame.
         """
         return len(self.frameShape)
 
     @property
     def indexDim(self):
         """
-        The dimensions for indexing acquired data frames.
+        The number of dimensions for indexing acquired data frames.
 
         Returns:
-            tuple or None: Dimensions for indexing acquired data.
+            int: Number of dimensions for indexing acquired data.
         """
         return len(self.indexShape)
 
@@ -344,3 +350,4 @@ class MultiDetectorInterface(DetectorInterface):
             tuple: Shape of the acquired data.
         """
         return tuple([*self.indexShape, *self.frameShape])
+    
