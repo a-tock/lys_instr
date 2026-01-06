@@ -111,8 +111,10 @@ class _FunctionWidget(QtWidgets.QTreeWidget):
         menu.addAction(add)
         menu.addAction(clear)
 
-        copy = QtWidgets.QAction('Copy targets and functions', triggered=self._copy)
-        paste = QtWidgets.QAction('Paste targets and functions', triggered=self._paste)
+        copy = QtWidgets.QAction('copy targets and functions', triggered=self._copy)
+        paste = QtWidgets.QAction('paste targets and functions', triggered=self._paste)
+        export = QtWidgets.QAction('export targets and functions', triggered=self._export)
+        load = QtWidgets.QAction('load from file', triggered=self._loadFromFile)
         menu.addAction(copy)
         menu.addAction(paste)
         menu.addAction(export)
@@ -361,9 +363,42 @@ class _FunctionWidget(QtWidgets.QTreeWidget):
                 top.addChild(_EditableItem([funcName, funcExpr]))
 
     def _copy(self):
-        """
-        Save a portable representation of the current corrections mapping.
-        """
+        dics = self._correctionToDic()
+        with open(".lys_instr/copyPreCorrection.txt", 'w') as f:
+            f.write(str(dics))
+
+    def _paste(self):
+        self._obj.corrections.clear()
+        self.clear()
+        with open(".lys_instr/copyPreCorrection.txt", 'r') as f:
+            dicsAsStr = f.read()
+        dics = eval(dicsAsStr)
+        self._dicToCorrection(dics)
+
+    def _export(self):
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(filter="Text Files (*.txt);;All Files (*)")
+        self._save(path)
+
+    def _save(self, path):
+        dics = self._correctionToDic()
+        if len(path) != 0:
+            with open(path, 'w') as f:
+                f.write(str(dics))
+
+    def _loadFromFile(self):
+        file, _ = QtWidgets.QFileDialog.getOpenFileName(None, 'Open file', filter="Text Files (*.txt);;All Files (*)")
+        if 0 != len(file):
+            self._load(file)
+
+    def _load(self, file):
+        with open(file, 'r') as f:
+            dicsAsStr = f.read()
+        dics = eval(dicsAsStr)
+        self._obj.corrections.clear()
+        self.clear()
+        self._dicToCorrection(dics)
+
+    def _correctionToDic(self):
         dics = []
         for i in range(self.topLevelItemCount()):
             item = self.topLevelItem(i)
@@ -376,20 +411,7 @@ class _FunctionWidget(QtWidgets.QTreeWidget):
             dics.append({"terget": key, "expression": expression, "funcs": funcPathes, "variables": variables})
         return dics
 
-        with open(".lys_instr/copyPreCorrection.txt", 'w') as f:
-            f.write(str(dics))
-
-    def _paste(self):
-        """
-        Load and apply a previously saved corrections mapping.
-        """
-        self._obj.corrections.clear()
-        self.clear()
-
-        with open(".lys_instr/copyPreCorrection.txt", 'r') as f:
-            dicsAsStr = f.read()
-        dics = eval(dicsAsStr)
-
+    def _dicToCorrection(self, dics):
         i = 0
         for dic in dics:
             self._setTarget(dic["terget"])
