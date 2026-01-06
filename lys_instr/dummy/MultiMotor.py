@@ -6,7 +6,17 @@ from lys.Qt import QtWidgets, QtCore
 
 
 class _ValueInfo(QtCore.QObject):
+    """
+    Container that holds the current simulated position, a pending motion target, and an error flag for a motor axis.
+    """
+
     def __init__(self, speed):
+        """
+        Initialize the container.
+
+        Args:
+            speed (float): Motion speed used for simulation in units per second.
+        """
         super().__init__()
         self._position = 0
         self._speed = speed
@@ -14,11 +24,25 @@ class _ValueInfo(QtCore.QObject):
         self.error = False
 
     def set(self, target):
+        """
+        Set a target for the motor axis.
+
+        Record the current position, store the requested target, and start timing used to interpolate the position toward the target.
+
+        Args:
+            target (float): Target position to move toward.
+        """
         self._before = self._position
         self._target = target
         self._timing = time.perf_counter()
 
     def _update(self):
+        """
+        Update the axis position with a simulated value.
+
+        Compute the interpolated position based on elapsed time since ``set`` was called and the configured speed.
+        Clear the target when it is reached.
+        """
         if self._target is None:
             return
         d = self._target - self._before
@@ -30,16 +54,35 @@ class _ValueInfo(QtCore.QObject):
             self._position = self._before + d * t
 
     def stop(self):
+        """
+        Simulate stopping the motion.
+
+        Update the simulated position and clear any pending target.
+        """
         self._update()
         self._target = None
 
     @property
     def busy(self):
+        """
+        Current simulated busy state of the motor axis.
+
+        This property updates internal state before returning.
+
+        Returns:
+            bool: True if the motor axis motion is in progress, False otherwise.
+        """
         self._update()
         return self._target is not None
     
     @property
     def position(self):
+        """
+        Current simulated position of the motor axis.
+
+        Returns:
+            float: Current simulated position.
+        """
         self._update()
         return self._position
 
@@ -48,20 +91,18 @@ class MultiMotorDummy(MultiMotorInterface):
     """
     Dummy implementation of ``MultiMotorInterface``.
 
-    This class simulates a multi-axis motor controller, including axis positions, busy/alive state management, and per-axis error injection for testing purposes.
+    This class simulates a multi-axis motor, including axis positions, busy/alive state management, and per-axis error injection for testing purposes.
     """
 
-    def __init__(self, *axisNamesAll, speed=0.2, **kwargs):
+    def __init__(self, *axisNamesAll, speed=10, **kwargs):
         """
-        Initializes the dummy multi-axis motor with the given axis names.
+        Initialize the dummy multi-axis motor.
 
-        Sets up simulation parameters and starts the background polling thread.
-        The simulated motion speed is set to 0.2 units per second by default.
-        For testing, set ``_error`` which are a list of booleans indicating the axes to simulate errors
-        ``_speed`` is the speed of simulated motion in units per second. Defaults to 0.2.
+        Call ``start()`` to begin the background polling thread.
 
         Args:
-            *axisNamesAll: Names of all axes to simulate.
+            *axisNamesAll: Names of axes to simulate.
+            speed (float): Simulated motion speed (units per second).
             **kwargs: Additional keyword arguments passed to the parent class.
         """
         super().__init__(*axisNamesAll, **kwargs)
@@ -70,12 +111,12 @@ class MultiMotorDummy(MultiMotorInterface):
 
     def _set(self, **target):
         """
-        Sets target positions for the specified axes.
+        Set target positions for the specified axes.
 
-        Only the axes provided in the ``target`` dictionary will be updated; other axes remain unchanged.
+        Only axes present in ``target`` are updated; other axes are left unchanged.
 
         Args:
-            target (dict[str, float]): Mapping of axis names to their target positions.
+            target (dict[str, float]): Mapping of axis names to respective target positions.
         """
         for name, d in self._data.items():
             if name in target:
@@ -83,26 +124,25 @@ class MultiMotorDummy(MultiMotorInterface):
 
     def _get(self):
         """
-        Gets the current positions of all axes, updating the alive states.
-
-        For each axis, if an error is simulated, the axis is marked as not alive and its value is set to np.nan.
-        Otherwise, the current position is returned.
+        Get current positions for all axes.
 
         Returns:
-            dict[str, float]: Mapping of axis names to their current positions.
+            dict[str, float]: Mapping of axis names to respective current positions.
         """
         return {name: d.position for name, d in self._data.items()}
 
     def _stop(self):
         """
-        Stops all axes in the dummy motor by clearing their timing information.
+        Stop all axes in the dummy motor.
+
+        Clear per-axis timing information so motion targets are abandoned.
         """
         for d in self._data.values():
             d.stop()
 
     def _isBusy(self):
         """
-        Gets the busy state of all axes in the simulated multi-axis motor.
+        Return busy state for all axes.
 
         Returns:
             dict[str, bool]: Mapping of axis names to busy states.
@@ -111,38 +151,60 @@ class MultiMotorDummy(MultiMotorInterface):
 
     def _isAlive(self):
         """
-        Gets the alive state of all axes in the simulated multi-axis motor.
+        Return alive state for all axes.
 
         Returns:
             dict[str, bool]: Mapping of axis names to alive states.
         """
         return {name: not d.error for name, d in self._data.items()}
 
-    def settingsWidget(self):
+    @property
+    def error(self):
         """
-        Returns a QWidget for optional settings.
+        Per-axis error states.
 
         Returns:
-            QtWidgets.QWidget: The optional settings panel.
+            dict[str, bool]: Mapping of axis names to error flags.
+        """
+        return {name: d.error for name, d in self._data.items()}
+    
+    @error.setter
+    def error(self, value):
+        """
+        Set per-axis error states.
+
+        Args:
+            value (dict[str, bool]): Mapping of axis names to error flags.
+        """
+        for name, err in value.items():
+            if name in self._data:
+                self._data[name].error = err
+
+    def settingsWidget(self):
+        """
+        Create and return an optional settings widget.
+
+        Returns:
+            QtWidgets.QWidget: The settings panel widget.
         """
         return _OptionalPanel(self)
 
 
 class _OptionalPanel(QtWidgets.QWidget):
     """
-    Settings panel for a multi-axis motor device.
+    Optional settings panel.
 
-    Allows viewing and toggling the alive state and managing offsets for each axis.
+    Provides GUI to manage offsets and toggle alive states for each axis.
     """
     # Signal emitted when an offset is changed
     offsetChanged = QtCore.pyqtSignal()
 
     def __init__(self, obj):
         """
-        Initializes the optional settings panel with a reference to the backend object.
+        Initialize the settings panel.
 
         Args:
-            obj: The backend motor object.
+            obj (MultiMotorInterface | MultiSwitchInterface): Backend controller (motor or switch) using the panel.
         """
         super().__init__()
         self.setWindowTitle("Settings")
@@ -151,7 +213,7 @@ class _OptionalPanel(QtWidgets.QWidget):
 
     def _initLayout(self):
         """
-        Creates and initializes all GUI components of the settings dialog, and connects signals to their respective slots.
+        Build and arrange the panel's widgets and connect signal handlers.
         """
         switches = {name: QtWidgets.QPushButton("Change", clicked=lambda checked, n=name: self._toggleAlive(n)) for name in self._obj.nameList}
         nameLabels = {name: QtWidgets.QLabel(name) for name in self._obj.nameList}
@@ -172,12 +234,12 @@ class _OptionalPanel(QtWidgets.QWidget):
 
     def _toggleAlive(self, name):
         """
-        Toggles the alive state of the specified axis and emit the corresponding signal.
+        Toggle the alive state of a backend axis and emit notification signals.
 
         Args:
-            name (str): The axis name.
+            name (str): Name of the axis to toggle.
         """
         backend = self._obj
-        backend._error[backend.nameList.index(name)] = not backend._error[backend.nameList.index(name)]
+        backend.error = {**backend.error, name: not backend.error[name]}
         backend.valueChanged.emit(backend.get())
-        backend.aliveStateChanged.emit({name: backend._info[name].alive})
+        backend.aliveStateChanged.emit({name: backend.isAlive[name]})
