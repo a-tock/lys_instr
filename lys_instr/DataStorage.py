@@ -1,20 +1,15 @@
 import os
 import numpy as np
-import logging
 from lys import Wave
 from lys.Qt import QtCore
 
 
 class DataStorage(QtCore.QObject):
     """
-    Threaded data storage and file management for multi-dimensional data.
+    Threaded, asynchronous storage and file management for multi-dimensional data.
 
-    This class reserves disk space for data arrays, buffers and updates them with new values, and saves the buffered data to disk.
-    Saving is performed asynchronously in a background thread, keeping the main application responsive.
-    Qt signals are emitted to notify when the save path or saving state changes.
-
-    Args:
-        **kwargs: Additional keyword arguments passed to QObject.
+    This class reserves disk-backed arrays for incoming frames, buffers updates, and saves buffered data to disk using a background worker thread so the application remains responsive.
+    It emits Qt signals to report saving state and to request metadata tags for saved files.
     """
 
     #: Signal (bool) emitted when saving state changes.
@@ -23,11 +18,14 @@ class DataStorage(QtCore.QObject):
     #: Signal (dict) emitted to request metadata tags.
     tagRequest = QtCore.pyqtSignal(dict)
 
+    #: Signal emitted when the next available file number changes.
+    numberChanged = QtCore.pyqtSignal()
+
     def __init__(self, **kwargs):
         """
-        Initializes the ``DataStorage`` instance.
+        Initialize the data storage instance.
 
-        Sets up initial state.
+        Set default storage options and prepare internal buffers.
 
         Args:
             **kwargs: Additional keyword arguments passed to the base class.
@@ -43,11 +41,13 @@ class DataStorage(QtCore.QObject):
         self._paths = []
         self._arr = None
         self._notes = None
+        self._counter = 0
+        self._axes_cache = None
 
     @property
     def base(self):
         """
-        Returns the base directory for saving data files.
+        Base directory for saving data files.
 
         Returns:
             str: Base directory.
@@ -57,14 +57,14 @@ class DataStorage(QtCore.QObject):
     @base.setter
     def base(self, value):
         """
-        Sets the base directory for saving data files.
+        Set the base directory for saving data files.
         """
         self._base = value
 
     @property
     def folder(self):
         """
-        Returns the data folder name under base directory.
+        Data folder name under the base directory.
 
         Returns:
             str: Data folder name.
@@ -74,14 +74,14 @@ class DataStorage(QtCore.QObject):
     @folder.setter
     def folder(self, value):
         """
-        Sets the data folder name under base directory.
+        Set the data folder name under the base directory.
         """
         self._folder = value
 
     @property
     def name(self):
         """
-        Returns the base file name for saving data files.
+        Base file name used when saving data files.
 
         Returns:
             str: File name.
@@ -91,14 +91,14 @@ class DataStorage(QtCore.QObject):
     @name.setter
     def name(self, value):
         """
-        Sets the base file name for saving data files.
+        Set the base file name used for saved data files.
         """
         self._name = value
 
     @property
     def numbered(self):
         """
-        Returns whether automatic file numbering is enabled.
+        Whether automatic file numbering is enabled.
 
         Returns:
             bool: True if automatic file numbering is enabled, False otherwise.
@@ -108,35 +108,36 @@ class DataStorage(QtCore.QObject):
     @numbered.setter
     def numbered(self, value):
         """
-        Sets whether to enable automatic file numbering.
+        Set whether automatic file numbering is enabled.
         """
         self._numbered = value
 
     @property
     def enabled(self):
         """
-        Returns whether the ``DataStorage`` instance is enabled.
+        Whether the data storage instance is enabled.
 
         Returns:
-            bool: True if the ``DataStorage`` instance is enabled, False otherwise.
+            bool: True if enabled, False otherwise.
         """
         return self._enabled
 
     @enabled.setter
     def enabled(self, value):
         """
-        Sets whether to enable the ``DataStorage`` instance.
+        Set whether the data storage instance is enabled.
         """
         self._enabled = value
 
     def getNumber(self):
         """
-        Gets the next available file number for saving.
+        Return the next available file number for saving.
 
-        The number will be appended to the file name when saving if automatic numbering is enabled.
+        If automatic numbering is enabled the returned number will be appended to the base file name (for example: ``<name>_<number>.npz``).
+        If numbering is disabled this method returns ``None``.
 
         Returns:
-            int or None: Next available file number, or None if numbering is disabled.
+            int | None: Next available file number, or ``None`` if numbering is disabled.
         """
         if not self.numbered:
             return None
@@ -146,38 +147,47 @@ class DataStorage(QtCore.QObject):
         while True:
             candidate = os.path.join(self.base, self.folder, f"{self.name}_{i}.npz")
             if not os.path.exists(candidate) and candidate not in reserved:
+                self.numberChanged.emit()
                 return i
             i += 1
 
     def connect(self, detector):
         """
-        Connects this ``DataStorage`` instance to a detector.
+        Connect this data storage instance to a detector.
 
         Args:
-            detector (object): Detector instance emitting ``dataAcquired`` and ``busyStateChanged`` signals.
+            detector (``MultiDetectorInterface``): Detector that emits ``dataAcquired`` and ``busyStateChanged`` signals.
         """
-        detector.dataAcquired.connect(self.update)
+        detector.dataAcquired.connect(lambda data: self.update(data, detector=detector))
         detector.busyStateChanged.connect(lambda b: self._busyStateChanged(detector, b))
 
     def _busyStateChanged(self, detector, busy):
         """
-        Reserves storage if busy, otherwise saves the buffered data.
+        Reserve storage if busy; otherwise save the buffered data.
 
         Args:
-            busy (bool): If True, reserve storage; if False, save the buffered data.
+            detector (``MultiDetectorInterface``): Detector that the data storage instance is connected to.
+            busy (bool): True to reserve storage, False to save buffered data.
         """
         if busy:
             self.reserve(detector.dataShape)
-        else:
-            self.save(detector.axes)
+
+        self._axes_cache = detector.axes
 
     def reserve(self, shape, fillValue=None):
         """
-        Reserves storage for a new data array with the specified shape.
+        Reserve storage for a new data array with the specified shape.
+
+        Allocate and initialize an internal NumPy array with the given shape,
+        record a file path and tag for the upcoming save, emit ``tagRequest`` to request metadata, 
+        and update saving state via the ``savingStateChanged`` signal.
 
         Args:
             shape (tuple, optional): Shape of the data array to reserve.
-            fillValue (float, optional): Value to initialize the array with (default: NaN).
+            fillValue (float | None, optional): Value to initialize the array with. If ``None`` the array is initialized with NaNs. Defaults to ``None``.
+
+        Returns:
+            ``None``
         """
         if not self.enabled:
             self.savingStateChanged.emit(self.saving)
@@ -198,44 +208,59 @@ class DataStorage(QtCore.QObject):
         self._arr = np.full(shape, np.nan if fillValue is None else fillValue, dtype=float)
         self.savingStateChanged.emit(self.saving)
 
-    def update(self, data):
+    def update(self, data, detector=None):
         """
-        Updates the buffered data array with new values.
+        Update the buffered data array with new values.
+
+        Each entry in ``data`` maps an index tuple to a frame array; the buffer is updated in-place at those indices.
 
         Args:
-            indexShape (tuple): Index shape for the data.
-            data (dict[str, np.ndarray]): Dictionary mapping indices to data arrays for updating the buffer.
+            data (dict[tuple, np.ndarray]): Mapping from index tuples to frame arrays used to update the buffer.
+            detector (``MultiDetectorInterface``): Detector instance to query for axes information.
         """
         if not self.enabled:
             return
         for idx, value in data.items():
             self._arr[idx] = value
+            self._counter += 1
+            dim = len(idx)
+
+            if idx == () or self._counter >= np.prod(self._arr.shape[0:dim]):
+                self._counter = 0
+                axes = detector.axes if detector is not None else self._axes_cache
+                self.save(axes)
 
     def save(self, axes):
         """
-        Saves the buffered data array asynchronously to disk.
+        Save the buffered data array asynchronously to disk.
 
-        This method starts a worker thread to write the buffered data array and emits signals for path and saving state updates.
+        This method constructs a ``lys.Wave`` from the buffered array and provided coordinate arrays, attaches the queued metadata tag to ``lys.Wave.note``, 
+        and enqueues the Wave for export on a background worker thread.
+        Actual file write occurs in a ``_SaveThread``.
+
+        Args:
+            axes (Sequence[np.ndarray]): Coordinate arrays for each data axis used to construct the ``Wave``.
         """
         if not self.enabled:
             return
 
-        wave = Wave(self._arr.copy(), *axes)
-        wave.note = self._tags.pop(0)
-        path = self._paths.pop(0)
+        data_to_save = self._arr
+        self._arr = None
 
-        thread = _SaveThread(wave, path)
+        path = self._paths.pop(0)
+        note = self._tags.pop(0)
+
+        thread = _SaveThread(data_to_save, axes, note, path)
         thread.finished.connect(self._savingFinished)
         self._threads.append(thread)
         thread.start()
-
         self.savingStateChanged.emit(self.saving)
 
     def _savingFinished(self):
         """
-        Slot called when a save thread finishes.
+        Handle completion of a save thread.
 
-        Updates the saving state and emits the ``savingStateChanged`` signal.
+        Remove any non-running save threads from the internal thread list and emit ``savingStateChanged`` so listeners can update their state.
         """
         for i in reversed(range(len(self._threads))):
             if not self._threads[i].isRunning():
@@ -245,7 +270,7 @@ class DataStorage(QtCore.QObject):
     @property
     def saving(self):
         """
-        Returns whether a save operation is currently in progress.
+        Whether a save operation is in progress.
 
         Returns:
             bool: True if a save operation is in progress, False otherwise.
@@ -255,25 +280,35 @@ class DataStorage(QtCore.QObject):
 
 class _SaveThread(QtCore.QThread):
     """
-    Save thread for ``DataStorage``.
+    Background thread that writes a ``lys.Wave`` to disk.
 
-    Writes the provided Wave object asynchronously to disk at the specified path as a worker thread.
+    The thread calls ``lys.Wave.export`` on the provided ``Wave`` when started.
+    It is used by ``DataStorage`` to perform non-blocking file writes so the main application thread remains responsive.
     """
 
-    def __init__(self, wave, path):
+    def __init__(self, data, axes, note, path):
         """
-        Initialize the save thread with a Wave object and a file path.
+        Initialize the save thread.
 
         Args:
-            wave (Wave): The Wave object to be saved.
-            path (str): File path where the Wave object will be saved.
+            data (np.ndarray): The data to write to disk.
+            axes (Sequence): The axes that the data belongs to.
+            note (str): The note to store with the data.
+            path (str): Destination file path for the exported Wave.
         """
         super().__init__()
-        self.wave = wave
-        self.path = path
+        self._data = data
+        self._axes = axes
+        self._note = note
+        self._path = path
 
     def run(self):
         """
-        Runs the save thread, exporting the Wave object to the specified path.
+        Run the save thread and export the Wave to disk.
+
+        Calls ``lys.Wave.export`` on ``self.wave`` to write the Wave to ``self.path``.
+        This runs in the worker thread so the main application thread is not blocked by file I/O.
         """
-        self.wave.export(self.path)
+        wave = Wave(self._data, *self._axes)
+        wave.note = self._note
+        wave.export(self._path)
