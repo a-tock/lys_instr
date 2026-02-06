@@ -39,6 +39,7 @@ class DataStorage(QtCore.QObject):
         self._threads = []
         self._tags = []
         self._paths = []
+        self._detectors = {}
         self._arr = None
         self._notes = None
         self._counter = 0
@@ -158,9 +159,36 @@ class DataStorage(QtCore.QObject):
         Args:
             detector (``MultiDetectorInterface``): Detector that emits ``dataAcquired`` and ``busyStateChanged`` signals.
         """
-        detector.dataAcquired.connect(lambda data: self.update(data, detector=detector))
-        detector.busyStateChanged.connect(lambda b: self._busyStateChanged(detector, b))
-        detector.stopped.connect(lambda: self._stopped(detector))
+        if detector not in self._detectors:
+            self._detectors[detector] = {
+                "dataAcquired": lambda data: self.update(data, detector=detector),
+                "busyStateChanged": lambda b: self._busyStateChanged(detector, b),
+                "stopped": lambda: self._stopped(detector)
+            }
+        self._detectors[detector]["connected"] = True
+
+        detector.dataAcquired.connect(self._detectors[detector]["dataAcquired"])
+        detector.busyStateChanged.connect(self._detectors[detector]["busyStateChanged"])
+        detector.stopped.connect(self._detectors[detector]["stopped"])
+
+    def changeConnectState(self, detector, connect):
+        """
+        Connect or disconnect this data storage instance from a detector.
+
+        Args:
+            detector (``MultiDetectorInterface``): Detector that emits ``dataAcquired`` and ``busyStateChanged`` signals.
+            connect (bool): If True, connect the detector; if False, disconnect it.
+        """
+        if detector not in self._detectors:
+            return
+
+        if connect and not self._detectors[detector]["connected"]:
+            self.connect(detector)
+        else:
+            self._detectors[detector]["connected"] = False
+            detector.dataAcquired.disconnect(self._detectors[detector]["dataAcquired"])
+            detector.busyStateChanged.disconnect(self._detectors[detector]["busyStateChanged"])
+            detector.stopped.disconnect(self._detectors[detector]["stopped"])
 
     def _busyStateChanged(self, detector, busy):
         """
