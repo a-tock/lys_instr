@@ -184,7 +184,7 @@ class DataStorage(QtCore.QObject):
 
         if connect and not self._detectors[detector]["connected"]:
             self.connect(detector)
-        else:
+        elif not connect and self._detectors[detector]["connected"]:
             self._detectors[detector]["connected"] = False
             detector.dataAcquired.disconnect(self._detectors[detector]["dataAcquired"])
             detector.busyStateChanged.disconnect(self._detectors[detector]["busyStateChanged"])
