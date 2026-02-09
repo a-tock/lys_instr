@@ -619,7 +619,7 @@ class ScanWidget(QtWidgets.QWidget):
     Provides a list-based GUI for composing a sequence of motor and switch scans, configuring detector/process settings, and starting/stopping scan execution.
     """
 
-    def __init__(self, storage, motors, switches, detectors):
+    def __init__(self, storage, motors, switches, detectors, autosave=True):
         """
         Initialize the Scan widget.
 
@@ -634,7 +634,8 @@ class ScanWidget(QtWidgets.QWidget):
         self._motorScanners = self._initMotorScanners(motors)
         self._switchScanners = self._initSwitchScanners(switches)
         self._detectors = detectors
-        self._initLayout(self._motorScanners, self._switchScanners, self._detectors)
+        self._autosave = autosave
+        self._initLayout(self._motorScanners, self._switchScanners, self._detectors, self._autosave)
 
     def _initMotorScanners(self, motors):
         """
@@ -660,7 +661,7 @@ class ScanWidget(QtWidgets.QWidget):
             scanners.update({axis: sw for axis in sw.nameList})
         return scanners
 
-    def _initLayout(self, motorScanners, switchScanners, process):
+    def _initLayout(self, motorScanners, switchScanners, process, autosave):
         """
         Construct the scan list GUI and control buttons.
 
@@ -688,7 +689,9 @@ class ScanWidget(QtWidgets.QWidget):
         layout.addWidget(label)
         layout.addWidget(self._list)
         layout.addWidget(processBox)
-        layout.addWidget(self._nameBox)
+        if autosave:
+            self._nameBox = _FileNameBox(self._list)
+            layout.addWidget(self._nameBox)
         layout.addLayout(btnsLayout)
         layout.addStretch()
 
@@ -734,7 +737,8 @@ class ScanWidget(QtWidgets.QWidget):
         self._storage.numbered = False
         self._storage.enabled = True
         self._storage.tagRequest.connect(self._setScanNames)
-        self._name = self._nameBox.text
+        if self._autosave:
+            self._name = self._nameBox.text
 
         self._loopCounts = {i: [0, 0] for i, _ in enumerate(self._list) if self._list[i].scanName == "loop"}
 
@@ -750,7 +754,8 @@ class ScanWidget(QtWidgets.QWidget):
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.finished.connect(self._scanFinished)
 
-        self._worker.beforeAcquisition.connect(self._updateName)
+        if self._autosave:
+            self._worker.beforeAcquisition.connect(self._updateName)
 
         self._startBtn.setEnabled(False)
         self._stopBtn.setEnabled(True)
