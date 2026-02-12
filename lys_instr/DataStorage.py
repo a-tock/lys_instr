@@ -246,7 +246,7 @@ class DataStorage(QtCore.QObject):
         self._arr = np.full(shape, np.nan if fillValue is None else fillValue, dtype=float)
         self.savingStateChanged.emit(self.saving)
 
-    def update(self, data, detector=None):
+    def update(self, data, detector=None, save=True):
         """
         Update the buffered data array with new values.
 
@@ -255,6 +255,7 @@ class DataStorage(QtCore.QObject):
         Args:
             data (dict[tuple, np.ndarray]): Mapping from index tuples to frame arrays used to update the buffer.
             detector (``MultiDetectorInterface``): Detector instance to query for axes information.
+            save (bool): If True, automatically save the buffer when full. Defaults to True.
         """
         if not self.enabled:
             return
@@ -264,7 +265,7 @@ class DataStorage(QtCore.QObject):
                 self._counter += 1
                 dim = len(idx)
 
-            if idx == () or self._counter >= np.prod(self._arr.shape[0:dim]):
+            if save and (idx == () or self._counter >= np.prod(self._arr.shape[0:dim])):
                 axes = detector.axes if detector is not None else self._axes_cache
                 self.save(axes)
 
