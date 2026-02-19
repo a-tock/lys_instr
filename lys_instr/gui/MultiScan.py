@@ -47,6 +47,7 @@ class _MotorScanRow(QtWidgets.QWidget):
         self._from.setDecimals(4)
         self._from.setEnabled(False)
         self._step = QtWidgets.QDoubleSpinBox(objectName="ScanRange_step_" + title)
+        self._step.setValue(1)
         self._step.setRange(-np.inf, np.inf)
         self._step.setDecimals(4)
         self._step.setEnabled(False)
@@ -612,6 +613,70 @@ class _FileNameBox(QtWidgets.QGroupBox):
         return self._name.text()
 
 
+class _MaskSelector(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        """
+        Mask selection widget.
+        """
+        super().__init__(parent)
+
+        self._use_mask_cb = QtWidgets.QCheckBox("Use initial mask")
+        self._mask_path_le = QtWidgets.QLineEdit()
+        self._browse_btn = QtWidgets.QPushButton("Browse")
+
+        v = QtWidgets.QVBoxLayout()
+        v.addWidget(self._use_mask_cb)
+        h = QtWidgets.QHBoxLayout()
+        h.addWidget(self._mask_path_le)
+        h.addWidget(self._browse_btn)
+        v.addLayout(h)
+        self.setLayout(v)
+
+        self._toggle_mask_widgets(self._use_mask_cb.isChecked())
+        self._use_mask_cb.toggled.connect(self._toggle_mask_widgets)
+        self._browse_btn.clicked.connect(self._browse_file)
+
+    def _toggle_mask_widgets(self, checked):
+        """
+        Enable/disable mask widgets.
+        Args:
+            checked (bool): Whether the 'Use initial mask' checkbox is checked.
+        """
+        self._mask_path_le.setEnabled(checked)
+        self._browse_btn.setEnabled(checked)
+
+    def _browse_file(self):
+        """
+        Open a file dialog to select a mask file.
+        """
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select mask file",
+            "",
+            "NumPy files (*.npy *.npz)"
+        )
+        if path:
+            self._mask_path_le.setText(path)
+
+    def use_mask(self):
+        """
+        Return whether the 'Use initial mask' checkbox is checked.
+
+        Returns:
+            bool: Whether the 'Use initial mask' checkbox is checked.
+        """
+        return self._use_mask_cb.isChecked()
+
+    def mask_path(self):
+        """
+        Return the path to the selected mask file.
+
+        Returns:
+            str: Path to the selected mask file.
+        """
+        return self._mask_path_le.text()
+
+
 class ScanWidget(QtWidgets.QWidget):
     """
     Scan configuration and execution panel.
@@ -619,7 +684,9 @@ class ScanWidget(QtWidgets.QWidget):
     Provides a list-based GUI for composing a sequence of motor and switch scans, configuring detector/process settings, and starting/stopping scan execution.
     """
 
-    def __init__(self, storage, motors, switches, detectors):
+    maskChanged = QtCore.pyqtSignal(object)
+
+    def __init__(self, storage, motors, switches, detectors, autosave=True, preStartFunc=None, postFinishFunc=None):
         """
         Initialize the Scan widget.
 
@@ -634,7 +701,11 @@ class ScanWidget(QtWidgets.QWidget):
         self._motorScanners = self._initMotorScanners(motors)
         self._switchScanners = self._initSwitchScanners(switches)
         self._detectors = detectors
-        self._initLayout(self._motorScanners, self._switchScanners, self._detectors)
+        self._autosave = autosave
+        self._preStartFunc = preStartFunc
+        self._postFinishFunc = postFinishFunc
+        self._mask = None
+        self._initLayout(self._motorScanners, self._switchScanners, self._detectors, self._autosave)
 
     def _initMotorScanners(self, motors):
         """
@@ -660,7 +731,7 @@ class ScanWidget(QtWidgets.QWidget):
             scanners.update({axis: sw for axis in sw.nameList})
         return scanners
 
-    def _initLayout(self, motorScanners, switchScanners, process):
+    def _initLayout(self, motorScanners, switchScanners, process, autosave):
         """
         Construct the scan list GUI and control buttons.
 
@@ -672,9 +743,10 @@ class ScanWidget(QtWidgets.QWidget):
         label = QtWidgets.QLabel("List of parameters (right click to edit)")
 
         self._list = _ScanList(motorScanners, switchScanners)
-        self._nameBox = _FileNameBox(self._list)
 
         processBox = self.__detectorBox(process)
+
+        self._maskSelector = _MaskSelector(self)
 
         self._startBtn = QtWidgets.QPushButton("Start", clicked=self._start)
         self._stopBtn = QtWidgets.QPushButton("Stop", clicked=self._stop)
@@ -687,7 +759,9 @@ class ScanWidget(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(label)
         layout.addWidget(self._list)
+        layout.addWidget(self._maskSelector)
         layout.addWidget(processBox)
+        self._nameBox = _FileNameBox(self._list)
         layout.addWidget(self._nameBox)
         layout.addLayout(btnsLayout)
         layout.addStretch()
@@ -727,14 +801,34 @@ class ScanWidget(QtWidgets.QWidget):
 
         Builds the nested process chain from the configured scan list and starts the worker thread.
         """
-        process = _DetectorProcess(self._detectors[self._detectorsBox.currentText()], self._exposure.value())
-        for s in self._list:
-            process = _ScanProcess(s.scanName, s.scanObj, s.scanRange, process)
 
+        self._currentDetector = self._detectors[self._detectorsBox.currentText()]
+        process = _DetectorProcess(self._currentDetector, self._exposure.value())
+        for i, s in enumerate(self._list):
+            process = _ScanProcess(s.scanName, s.scanObj, s.scanRange, process, i)
+
+        self.maskChanged.connect(process.setMask)
+
+        if self._maskSelector.use_mask():
+            mask_path = self._maskSelector.mask_path()
+            if os.path.exists(mask_path):
+                if mask_path.endswith(".npy"):
+                    mask = np.load(mask_path)
+                elif mask_path.endswith(".npz"):
+                    mask = np.load(mask_path)
+                else:
+                    raise ValueError("Unsupported mask file format: " + mask_path)
+                self.setMask(mask)
+            else:
+                print("Mask file does not exist: " + mask_path)
+
+        self._name = self._nameBox.text
         self._storage.numbered = False
         self._storage.enabled = True
         self._storage.tagRequest.connect(self._setScanNames)
-        self._name = self._nameBox.text
+
+        if not self._autosave:
+            self._storage.changeConnectState(self._currentDetector, False)
 
         self._loopCounts = {i: [0, 0] for i, _ in enumerate(self._list) if self._list[i].scanName == "loop"}
 
@@ -755,6 +849,9 @@ class ScanWidget(QtWidgets.QWidget):
         self._startBtn.setEnabled(False)
         self._stopBtn.setEnabled(True)
         self._oldName = self._storage.name
+
+        if self._preStartFunc is not None:
+            self._preStartFunc()
         self._thread.start()
 
     def _scanFinished(self):
@@ -765,7 +862,12 @@ class ScanWidget(QtWidgets.QWidget):
         self._stopBtn.setEnabled(False)
         self._storage.name = self._oldName
         self._storage.numbered = True
+        self._mask = None
 
+        if not self._autosave:
+            self._storage.changeConnectState(self._currentDetector, True)
+        if self._postFinishFunc is not None:
+            self._postFinishFunc()
         if hasattr(self, "_loopCounts"):
             del self._loopCounts
 
@@ -775,21 +877,13 @@ class ScanWidget(QtWidgets.QWidget):
         """
         name = str(self._name)
         for i, scan in enumerate(self._list):
-            if scan.scanName == "loop":
-                num = int(self._loopCounts[i][0])
-                value = num
-                index = num
-                n = np.prod([len(self._list[j].scanRange) for j in range(i)])
-                self._loopCounts[i][1] += 1
-                self._loopCounts[i][0] += self._loopCounts[i][1] // n
-                self._loopCounts[i][0] %= len(scan.scanRange)
-                self._loopCounts[i][1] %= n
-            else:
-                value = scan.scanObj.get()[scan.scanName]
-                index = scan.scanIndex
+            value = scan.scanObj.get()[scan.scanName]
+            index = scan.scanIndex
             name = name.replace("{" + str(i + 1) + "}", value) if type(value) == str else name.replace("{" + str(i + 1) + "}", f"{value:.5g}")
             name = name.replace("[" + str(i + 1) + "]", str(index))
-        self._storage.name = name
+        if self._autosave:
+            self._storage.name = name
+        self._current_name = name
 
     def _stop(self):
         """
@@ -811,7 +905,7 @@ class ScanWidget(QtWidgets.QWidget):
         """
         Event handler for window close event.
 
-        If the scan is running when the window is closed, 
+        If the scan is running when the window is closed,
         this method will force the scan to stop and wait for the thread to finish before accepting the close event.
         """
         if hasattr(self, "_thread") and self._thread.isRunning():
@@ -819,6 +913,46 @@ class ScanWidget(QtWidgets.QWidget):
             self._thread.quit()
             self._thread.wait()
         event.accept()
+
+    @property
+    def currentName(self):
+        """
+        Return the current file name used in the scan.
+
+        Returns:
+            str: Current file name.
+        """
+        return self._current_name
+
+    @property
+    def selectedDetector(self):
+        """
+        Return the currently selected detector.
+
+        Returns:
+            DetectorInterface: Currently selected detector.
+        """
+        return self._currentDetector
+
+    def setMask(self, mask=None):
+        """
+        Set a mask to apply to the detector during the scan.
+
+        Args:
+            mask (np.ndarray | None): Mask array to set on the detector, or ``None`` to clear any existing mask. Default is ``None``.
+        """
+        self._mask = np.array(mask) if mask is not None else None
+        self.maskChanged.emit(self._mask)
+
+    @property
+    def scanList(self):
+        """
+        Return a list of dictionaries containing information about each scan axis.
+
+        Returns:
+            list[dict[str, object]]: List of mappings with keys 'name', 'values', and 'object' for each scan axis.
+        """
+        return [{"name": s.scanName, "values": s.scanRange, "object": s.scanObj} for s in self._list]
 
 
 class _ScanWorker(QtCore.QObject):
@@ -985,7 +1119,7 @@ class _ScanProcess(QtCore.QObject):
     #: Signal emitted when current scan has finished (either after all work is done or after a stop request).
     finished = QtCore.pyqtSignal()
 
-    def __init__(self, name, obj, values, process):
+    def __init__(self, name, obj, values, process, level):
         """
         Create a scan process for a single axis.
 
@@ -994,6 +1128,7 @@ class _ScanProcess(QtCore.QObject):
             obj (object): Controller exposing ``set(..., wait=True)`` and ``get()``.
             values (Iterable[float | str]): Sequence of values to iterate over (elements are numeric or label strings).
             process (object): Nested process exposing ``start()`` and ``stop()``.
+            level (int): Nesting level of this scan process (0 for innermost).
         """
         super().__init__()
         self._name = name
@@ -1001,6 +1136,8 @@ class _ScanProcess(QtCore.QObject):
         self._values = list(values)
         self._process = process
         self._index = 0
+        self._level = level
+        self._mask = None
         self._shouldStop = False
         self._finished = False
         self._stopPending = False
@@ -1039,10 +1176,16 @@ class _ScanProcess(QtCore.QObject):
                 self._emitFinished()
             return
 
-        value = self._values[self._index]
-        self._index += 1
+        if self._mask is not None and self._level == 0 and not self._mask[self._index]:
+            self._index += 1
+            self._next()
+            return
 
+        value = self._values[self._index]
         self._obj.set(**{self._name: value}, wait=True)
+        if self._mask is not None and self._level > 0 and self._level == len(self._mask.shape) - 1:
+            self._process.setMask(self._mask[self._index])
+        self._index += 1
         self._process.start()
 
     @QtCore.pyqtSlot()
@@ -1067,3 +1210,14 @@ class _ScanProcess(QtCore.QObject):
             return
         self._finished = True
         self.finished.emit()
+
+    def setMask(self, mask):
+        """
+        Set a mask to apply during the scan.
+
+        Args:
+            mask (np.ndarray | None): Mask array to set, or ``None`` to clear any existing mask.
+        """
+        self._mask = mask
+        if hasattr(self._process, "setMask"):
+            self._process.setMask(mask)

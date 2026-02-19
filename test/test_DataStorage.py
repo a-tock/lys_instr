@@ -6,6 +6,7 @@ import numpy as np
 
 from PyQt5 import QtTest
 from lys_instr.DataStorage import DataStorage
+from lys_instr.dummy import MultiDetectorDummy
 
 
 class TestDataStorage(unittest.TestCase):
@@ -72,3 +73,40 @@ class TestDataStorage(unittest.TestCase):
                 self.assertTrue(len(arr_keys) > 0, "No arrays found in saved file.")
                 arrFromFile = npz[arr_keys[0]]
                 self.assertTrue(np.array_equal(arrFromFile, arrSaving), "Saved array does not match the storage buffer.")
+
+    def test_connect(self):
+        def _startAcquireAndCheckFileExists(detector, base, folder, name, n):
+            detector.startAcq(wait=True)
+            QtTest.QTest.qWait(100)
+
+            timeout = 5  # seconds
+            start = time.time()
+            while storage.saving and (time.time() - start < timeout):
+                QtTest.QTest.qWait(10)
+
+            fold = os.path.join(base, folder)
+            expectedFile = os.path.join(fold, f"{name}_{n}.npz")
+            return os.path.exists(expectedFile), expectedFile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = DataStorage()
+            storage.base = tmpdir
+            storage.folder = "newFolder"
+
+            detector = MultiDetectorDummy()
+            storage.connect(detector)
+            storage.name = "name"
+            n = storage.getNumber()
+
+            exists, expectedFile = _startAcquireAndCheckFileExists(detector, storage.base, storage.folder, storage.name, n)
+            self.assertTrue(exists, f"Expected file {expectedFile} does not exist.")
+
+            storage.changeConnectState(detector, False)
+            n = storage.getNumber()
+            exists, expectedFile = _startAcquireAndCheckFileExists(detector, storage.base, storage.folder, storage.name, n)
+            self.assertFalse(exists, f"Unexpected file {expectedFile} exists.")
+
+            storage.changeConnectState(detector, True)
+            n = storage.getNumber()
+            exists, expectedFile = _startAcquireAndCheckFileExists(detector, storage.base, storage.folder, storage.name, n)
+            self.assertTrue(exists, f"Expected file {expectedFile} does not exist.")
