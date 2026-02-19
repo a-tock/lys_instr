@@ -723,7 +723,7 @@ class ScanWidget(QtWidgets.QWidget):
 
         processBox = self.__detectorBox(process)
 
-        self._maskSelector = _MaskSelector()
+        self._maskSelector = _MaskSelector(self)
 
         self._startBtn = QtWidgets.QPushButton("Start", clicked=self._start)
         self._stopBtn = QtWidgets.QPushButton("Stop", clicked=self._stop)
