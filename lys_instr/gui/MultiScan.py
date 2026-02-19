@@ -47,6 +47,7 @@ class _MotorScanRow(QtWidgets.QWidget):
         self._from.setDecimals(4)
         self._from.setEnabled(False)
         self._step = QtWidgets.QDoubleSpinBox(objectName="ScanRange_step_" + title)
+        self._step.setValue(1)
         self._step.setRange(-np.inf, np.inf)
         self._step.setDecimals(4)
         self._step.setEnabled(False)
