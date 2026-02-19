@@ -615,6 +615,9 @@ class _FileNameBox(QtWidgets.QGroupBox):
 
 class _MaskSelector(QtWidgets.QWidget):
     def __init__(self, parent=None):
+        """
+        Mask selection widget.
+        """
         super().__init__(parent)
 
         self._use_mask_cb = QtWidgets.QCheckBox("Use initial mask")
@@ -634,10 +637,18 @@ class _MaskSelector(QtWidgets.QWidget):
         self._browse_btn.clicked.connect(self._browse_file)
 
     def _toggle_mask_widgets(self, checked):
+        """
+        Enable/disable mask widgets.
+        Args:
+            checked (bool): Whether the 'Use initial mask' checkbox is checked.
+        """
         self._mask_path_le.setEnabled(checked)
         self._browse_btn.setEnabled(checked)
 
     def _browse_file(self):
+        """
+        Open a file dialog to select a mask file.
+        """
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             "Select mask file",
@@ -648,9 +659,21 @@ class _MaskSelector(QtWidgets.QWidget):
             self._mask_path_le.setText(path)
 
     def use_mask(self):
+        """
+        Return whether the 'Use initial mask' checkbox is checked.
+
+        Returns:
+            bool: Whether the 'Use initial mask' checkbox is checked.
+        """
         return self._use_mask_cb.isChecked()
 
     def mask_path(self):
+        """
+        Return the path to the selected mask file.
+
+        Returns:
+            str: Path to the selected mask file.
+        """
         return self._mask_path_le.text()
 
 
