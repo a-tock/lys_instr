@@ -39,6 +39,7 @@ class DataStorage(QtCore.QObject):
         self._threads = []
         self._tags = []
         self._paths = []
+        self._detectors = {}
         self._arr = None
         self._notes = None
         self._counter = 0
@@ -158,9 +159,36 @@ class DataStorage(QtCore.QObject):
         Args:
             detector (``MultiDetectorInterface``): Detector that emits ``dataAcquired`` and ``busyStateChanged`` signals.
         """
-        detector.dataAcquired.connect(lambda data: self.update(data, detector=detector))
-        detector.busyStateChanged.connect(lambda b: self._busyStateChanged(detector, b))
-        detector.stopped.connect(lambda: self._stopped(detector))
+        if detector not in self._detectors:
+            self._detectors[detector] = {
+                "dataAcquired": lambda data: self.update(data, detector=detector),
+                "busyStateChanged": lambda b: self._busyStateChanged(detector, b),
+                "stopped": lambda: self._stopped(detector)
+            }
+        self._detectors[detector]["connected"] = True
+
+        detector.dataAcquired.connect(self._detectors[detector]["dataAcquired"])
+        detector.busyStateChanged.connect(self._detectors[detector]["busyStateChanged"])
+        detector.stopped.connect(self._detectors[detector]["stopped"])
+
+    def changeConnectState(self, detector, connect):
+        """
+        Connect or disconnect this data storage instance from a detector.
+
+        Args:
+            detector (``MultiDetectorInterface``): Detector that emits ``dataAcquired`` and ``busyStateChanged`` signals.
+            connect (bool): If True, connect the detector; if False, disconnect it.
+        """
+        if detector not in self._detectors:
+            return
+
+        if connect and not self._detectors[detector]["connected"]:
+            self.connect(detector)
+        elif not connect and self._detectors[detector]["connected"]:
+            self._detectors[detector]["connected"] = False
+            detector.dataAcquired.disconnect(self._detectors[detector]["dataAcquired"])
+            detector.busyStateChanged.disconnect(self._detectors[detector]["busyStateChanged"])
+            detector.stopped.disconnect(self._detectors[detector]["stopped"])
 
     def _busyStateChanged(self, detector, busy):
         """
@@ -218,7 +246,7 @@ class DataStorage(QtCore.QObject):
         self._arr = np.full(shape, np.nan if fillValue is None else fillValue, dtype=float)
         self.savingStateChanged.emit(self.saving)
 
-    def update(self, data, detector=None):
+    def update(self, data, detector=None, save=True):
         """
         Update the buffered data array with new values.
 
@@ -227,6 +255,7 @@ class DataStorage(QtCore.QObject):
         Args:
             data (dict[tuple, np.ndarray]): Mapping from index tuples to frame arrays used to update the buffer.
             detector (``MultiDetectorInterface``): Detector instance to query for axes information.
+            save (bool): If True, automatically save the buffer when full. Defaults to True.
         """
         if not self.enabled:
             return
@@ -236,7 +265,7 @@ class DataStorage(QtCore.QObject):
                 self._counter += 1
                 dim = len(idx)
 
-            if idx == () or self._counter >= np.prod(self._arr.shape[0:dim]):
+            if save and (idx == () or self._counter >= np.prod(self._arr.shape[0:dim])):
                 axes = detector.axes if detector is not None else self._axes_cache
                 self.save(axes)
 
@@ -256,13 +285,13 @@ class DataStorage(QtCore.QObject):
 
         self._counter = 0
 
-        data_to_save = self._arr
+        dataToSave = self._arr
         self._arr = None
 
         path = self._paths.pop(0)
         note = self._tags.pop(0)
 
-        thread = _SaveThread(data_to_save, axes, note, path)
+        thread = _SaveThread(dataToSave, axes, note, path)
         thread.finished.connect(self._savingFinished)
         self._threads.append(thread)
         thread.start()
