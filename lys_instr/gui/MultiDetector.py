@@ -14,7 +14,7 @@ class MultiDetectorGUI(QtWidgets.QWidget):
     Listens to the detector's ``busyStateChanged``, ``aliveStateChanged``, and ``dataAcquired`` signals to update the GUI.
     """
 
-    def __init__(self, obj, wait=False, interval=1, iter=1):
+    def __init__(self, obj, wait=False, interval=1, iter=1, preAcquireFunc=None):
         """
         Initialize the detector GUI.
 
@@ -28,6 +28,7 @@ class MultiDetectorGUI(QtWidgets.QWidget):
         self._obj = obj
         self._params = {"wait": wait, "interval": interval, "iter": iter}
         self._frameCount = None
+        self._preAcquireFunc = preAcquireFunc
 
         # Signals from the detector
         self._obj.busyStateChanged.connect(self._setButtonState)
@@ -138,6 +139,8 @@ class MultiDetectorGUI(QtWidgets.QWidget):
         Args:
             mode (str): "acquire" for a finite run or "stream" for continuous streaming (iter = -1).
         """
+        if self._preAcquireFunc is not None:
+            self._preAcquireFunc()
         if mode == "acquire":
             self._obj.startAcq(wait=self._params["wait"], iter=self._params["iter"])
         else:

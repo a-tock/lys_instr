@@ -73,6 +73,9 @@ class MultiMotorGUI(QtWidgets.QWidget):
         self._interrupt = QtWidgets.QPushButton("Stop", clicked=self._stop)
         self._interrupt.setEnabled(False)
 
+        self._refresh = QtWidgets.QPushButton("Update", clicked=self.update)
+        self._refresh.setEnabled(True)
+
         # Axis controls layout
         gl = QtWidgets.QGridLayout()
         gl.setAlignment(QtCore.Qt.AlignTop)
@@ -87,6 +90,7 @@ class MultiMotorGUI(QtWidgets.QWidget):
             item.addTo(gl, i+1, key in settable, key in joggable)
         gl.addWidget(self._interrupt, 2 + len(self._items), 2)
         gl.addWidget(self._execute, 2 + len(self._items), 3)
+        gl.addWidget(self._refresh, 2 + len(self._items), 5, 1, 2)
         gl.addWidget(SettingsButton(clicked=self._showSettings), 2 + len(self._items), 0)
 
         if memory is None:
@@ -143,6 +147,10 @@ class MultiMotorGUI(QtWidgets.QWidget):
         """
         settingsWindow = _SettingsDialog(self, self._objs, self._offsettable)
         settingsWindow.exec_()
+
+    def update(self):
+        for obj in self._objs:
+            obj.valueChanged.emit(obj.get())
 
 
 class _MotorRowLayout(QtCore.QObject):
