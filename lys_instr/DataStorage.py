@@ -268,6 +268,8 @@ class DataStorage(QtCore.QObject):
         if not self.enabled:
             return
         for idx, value in data.items():
+            if isinstance(idx, int):
+                idx = (idx,)
             if self._arr is not None:
                 self._arr[idx] = value
                 self._counter += 1
