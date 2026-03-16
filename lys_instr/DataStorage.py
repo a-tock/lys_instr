@@ -163,13 +163,15 @@ class DataStorage(QtCore.QObject):
             self._detectors[detector] = {
                 "dataAcquired": lambda data: self.update(data, detector=detector),
                 "busyStateChanged": lambda b: self._busyStateChanged(detector, b),
-                "stopped": lambda: self._stopped(detector)
+                "stopped": lambda: self._stopped(detector),
+                "retried": self._initializeData
             }
         self._detectors[detector]["connected"] = True
 
         detector.dataAcquired.connect(self._detectors[detector]["dataAcquired"])
         detector.busyStateChanged.connect(self._detectors[detector]["busyStateChanged"])
         detector.stopped.connect(self._detectors[detector]["stopped"])
+        detector.retried.connect(self._detectors[detector]["retried"])
 
     def changeConnectState(self, detector, connect):
         """
@@ -189,6 +191,7 @@ class DataStorage(QtCore.QObject):
             detector.dataAcquired.disconnect(self._detectors[detector]["dataAcquired"])
             detector.busyStateChanged.disconnect(self._detectors[detector]["busyStateChanged"])
             detector.stopped.disconnect(self._detectors[detector]["stopped"])
+            detector.retried.disconnect(self._detectors[detector]["retried"])
 
     def _busyStateChanged(self, detector, busy):
         """
@@ -243,8 +246,13 @@ class DataStorage(QtCore.QObject):
         self._paths.append(path)
         os.makedirs(folder, exist_ok=True)
 
+        self._fillValue = fillValue
         self._arr = np.full(shape, np.nan if fillValue is None else fillValue, dtype=float)
         self.savingStateChanged.emit(self.saving)
+    
+    def _initializeData(self):
+        self._arr.fill(self._fillValue)
+        self._counter = 0
 
     def update(self, data, detector=None, save=True):
         """

@@ -71,6 +71,9 @@ class DetectorInterface(HardwareInterface):
     #: Signal emitted when acquisition is stopped.
     stopped = QtCore.pyqtSignal()
 
+    
+    retried = QtCore.pyqtSignal()
+
     def __init__(self, exposure=1, **kwargs):
         """
         Initialize the interface.

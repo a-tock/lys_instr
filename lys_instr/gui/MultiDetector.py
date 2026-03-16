@@ -34,6 +34,7 @@ class MultiDetectorGUI(QtWidgets.QWidget):
         self._obj.aliveStateChanged.connect(self._setButtonState)
         self._obj.dataAcquired.connect(self._dataAcquired)
         self._obj.busyStateChanged.connect(self._onAcqFinished)
+        self._obj.retried.connect(lambda: self._onAcqFinished(False))
 
         self._initLayout()
 
