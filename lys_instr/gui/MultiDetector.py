@@ -28,11 +28,12 @@ class MultiDetectorGUI(QtWidgets.QWidget):
         self._obj = obj
         self._params = {"wait": wait, "interval": interval, "iter": iter}
         self._frameCount = None
+        self._connectFunc = {"dataAcquired": {"state": True, "func": self._dataAcquired}}
 
         # Signals from the detector
         self._obj.busyStateChanged.connect(self._setButtonState)
         self._obj.aliveStateChanged.connect(self._setButtonState)
-        self._obj.dataAcquired.connect(self._dataAcquired)
+        self._obj.dataAcquired.connect(self._connectFunc["dataAcquired"]["func"])
         self._obj.busyStateChanged.connect(self._onAcqFinished)
         self._obj.retried.connect(lambda: self._onAcqFinished(False))
 
@@ -42,6 +43,10 @@ class MultiDetectorGUI(QtWidgets.QWidget):
         """
         Create and arrange the widgets for acquisition control and data display.
         """
+        self._updateBool = QtWidgets.QCheckBox("Update Display")
+        self._updateBool.setChecked(self._connectFunc["dataAcquired"]["state"])
+        self._updateBool.stateChanged.connect(self._updateBoolChanged)
+
         # Data display widget
         self._mcut = multicut(Wave(np.random.rand(*self._obj.dataShape), *self._obj.axes), returnInstance=True, subWindow=False)
         self._mcut.widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
@@ -83,10 +88,20 @@ class MultiDetectorGUI(QtWidgets.QWidget):
         controlsLayout.addWidget(SettingsButton(clicked=self._showSettings))
 
         mainLayout = QtWidgets.QVBoxLayout()
+        mainLayout.addWidget(self._updateBool)
         mainLayout.addLayout(imageLayout, stretch=1)
         mainLayout.addLayout(controlsLayout, stretch=0)
 
         self.setLayout(mainLayout)
+    
+    def _updateBoolChanged(self, bool):
+        if self._connectFunc["dataAcquired"]["state"] == bool:
+            return
+        
+        if bool:
+            self._obj.dataAcquired.connect(self._connectFunc["dataAcquired"]["func"])
+        else:
+            self._obj.dataAcquired.disconnect(self._connectFunc["dataAcquired"]["func"])
 
     def _update(self):
         """
