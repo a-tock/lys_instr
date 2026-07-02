@@ -14,7 +14,7 @@ class MultiDetectorGUI(QtWidgets.QWidget):
     Listens to the detector's ``busyStateChanged``, ``aliveStateChanged``, and ``dataAcquired`` signals to update the GUI.
     """
 
-    def __init__(self, obj, wait=False, interval=1, iter=1, preAcquireFunc=None):
+    def __init__(self, obj, wait=False, interval=1, iter=1, preAcquireFunc=None, setParamsFunc=None):
         """
         Initialize the detector GUI.
 
@@ -30,6 +30,7 @@ class MultiDetectorGUI(QtWidgets.QWidget):
         self._frameCount = None
         self._connectFunc = {"dataAcquired": {"state": True, "func": self._dataAcquired}}
         self._preAcquireFunc = preAcquireFunc
+        self._setParamsFunc = setParamsFunc
 
         # Signals from the detector
         self._obj.busyStateChanged.connect(self._setButtonState)
@@ -37,16 +38,23 @@ class MultiDetectorGUI(QtWidgets.QWidget):
         self._obj.dataAcquired.connect(self._connectFunc["dataAcquired"]["func"])
         self._obj.busyStateChanged.connect(self._onAcqFinished)
         self._obj.retried.connect(lambda: self._onAcqFinished(False))
-
         self._initLayout()
 
     def _initLayout(self):
         """
         Create and arrange the widgets for acquisition control and data display.
         """
+
         self._updateBool = QtWidgets.QCheckBox("Update Display")
         self._updateBool.setChecked(self._connectFunc["dataAcquired"]["state"])
         self._updateBool.stateChanged.connect(self._updateBoolChanged)
+
+        self._setParams = []
+        if self._setParamsFunc:
+            if type(self._setParamsFunc) is dict:
+                pass
+            else:
+                self._setParams.append(QtWidgets.QPushButton("Set Detector Parameters", clicked=lambda: self._setParamsFunc()))
 
         # Data display widget
         self._mcut = multicut(Wave(np.random.rand(*self._obj.dataShape), *self._obj.axes), returnInstance=True, subWindow=False)
@@ -88,8 +96,13 @@ class MultiDetectorGUI(QtWidgets.QWidget):
         controlsLayout.addWidget(self._stop)
         controlsLayout.addWidget(SettingsButton(clicked=self._showSettings))
 
+        topLayout = QtWidgets.QHBoxLayout()
+        topLayout.addWidget(self._updateBool)
+        for sp in self._setParams:
+            topLayout.addWidget(sp)
+
         mainLayout = QtWidgets.QVBoxLayout()
-        mainLayout.addWidget(self._updateBool)
+        mainLayout.addLayout(topLayout, stretch=0)
         mainLayout.addLayout(imageLayout, stretch=1)
         mainLayout.addLayout(controlsLayout, stretch=0)
 
