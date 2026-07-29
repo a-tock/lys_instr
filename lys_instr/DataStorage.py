@@ -152,19 +152,21 @@ class DataStorage(QtCore.QObject):
                 return i
             i += 1
 
-    def connect(self, detector):
+    def connect(self, detector, name="detector"):
         """
         Connect this data storage instance to a detector.
 
         Args:
             detector (``MultiDetectorInterface``): Detector that emits ``dataAcquired`` and ``busyStateChanged`` signals.
+            name (str): Name of the detector.
         """
         if detector not in self._detectors:
             self._detectors[detector] = {
                 "dataAcquired": lambda data: self.update(data, detector=detector),
                 "busyStateChanged": lambda b: self._busyStateChanged(detector, b),
                 "stopped": lambda: self._stopped(detector),
-                "retried": self._initializeData
+                "retried": self._initializeData,
+                "name": name
             }
         self._detectors[detector]["connected"] = True
 
@@ -277,6 +279,8 @@ class DataStorage(QtCore.QObject):
 
             if save and (idx == () or self._counter >= np.prod(self._arr.shape[0:dim])):
                 axes = detector.axes if detector is not None else self._axes_cache
+                if detector is not None:
+                    self._tags[0].update({"detector": {"name": self._detectors[detector]["name"], **detector.getInfo()}})
                 self.save(axes)
 
     def save(self, axes):

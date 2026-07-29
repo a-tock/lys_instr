@@ -278,6 +278,15 @@ class DetectorInterface(HardwareInterface):
             NotImplementedError: If the subclass does not implement this method.
         """
         raise NotImplementedError("Subclasses must implement this method.")
+    
+    def getInfo(self):
+        """
+        Return device information.
+        
+        Returns:
+            dict: Device information.
+        """
+        return {"exposure (s)": self.exposure}
 
 
 class MultiDetectorInterface(DetectorInterface):
