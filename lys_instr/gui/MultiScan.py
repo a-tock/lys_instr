@@ -169,6 +169,26 @@ class _MotorScanRow(QtWidgets.QWidget):
         value = self.scanObj.get()[self.scanName]
         return np.argmin(abs(np.array(self.scanRange) - value))
 
+    def setCounter(self, counter):
+        """
+        Set the counter for this scan row.
+
+        Args:
+            counter (_Counter): Counter for tracking scan indices.
+        """
+        self._counter = counter
+
+    def getCounterIndex(self):
+        """
+        Get the counter index for this scan row.
+
+        Returns:
+            int: The counter index for this scan row.
+        """
+        if self._counter is not None:
+            return self._counter.get_count()
+        return 0
+
     def setIndex(self, index):
         """
         Set the index label for this scan row.
@@ -317,6 +337,26 @@ class _SwitchScanRow(QtWidgets.QWidget):
         """
         value = self.scanObj.get()[self.scanName]
         return self.scanRange.index(value)
+
+    def setCounter(self, counter):
+        """
+        Set the counter for this scan row.
+
+        Args:
+            counter (_Counter): Counter for tracking scan indices.
+        """
+        self._counter = counter
+
+    def getCounterIndex(self):
+        """
+        Get the counter index for this scan row.
+
+        Returns:
+            int: The counter index for this scan row.
+        """
+        if self._counter is not None:
+            return self._counter.get_count()
+        return 0
 
     def setIndex(self, index):
         """
@@ -805,7 +845,9 @@ class ScanWidget(QtWidgets.QWidget):
         self._currentDetector = self._detectors[self._detectorsBox.currentText()]
         process = _DetectorProcess(self._currentDetector, self._exposure.value())
         for i, s in enumerate(self._list):
-            process = _ScanProcess(s.scanName, s.scanObj, s.scanRange, process, i)
+            counter = _Counter()
+            s.setCounter(counter)
+            process = _ScanProcess(s.scanName, s.scanObj, s.scanRange, process, i, counter)
 
         self.maskChanged.connect(process.setMask)
 
@@ -878,7 +920,11 @@ class ScanWidget(QtWidgets.QWidget):
         name = str(self._name)
         for i, scan in enumerate(self._list):
             value = scan.scanObj.get()[scan.scanName]
-            index = scan.scanIndex
+            # Use counter index if available, otherwise use scanIndex
+            if hasattr(scan, '_counter') and scan._counter is not None:
+                index = scan.getCounterIndex()
+            else:
+                index = scan.scanIndex
             name = name.replace("{" + str(i + 1) + "}", value) if type(value) == str else name.replace("{" + str(i + 1) + "}", f"{value:.5g}")
             name = name.replace("[" + str(i + 1) + "]", str(index))
         if self._autosave:
@@ -1050,6 +1096,43 @@ class _Loop(QtCore.QObject):
         return {self._name: self._value}
 
 
+class _Counter:
+    """
+    Counter for tracking scan indices for a single scan process.
+    """
+
+    def __init__(self):
+        """
+        Initialize the counter.
+        """
+        self._count = -1
+
+    def increment(self):
+        """
+        Increment the counter.
+
+        Returns:
+            int: The new count value.
+        """
+        self._count += 1
+        return self._count
+
+    def get_count(self):
+        """
+        Get the current count.
+
+        Returns:
+            int: The current count value.
+        """
+        return self._count
+
+    def reset(self):
+        """
+        Reset the count to -1.
+        """
+        self._count = -1
+
+
 class _DetectorProcess(QtCore.QObject):
     """
     Detector process wrapper.
@@ -1119,7 +1202,7 @@ class _ScanProcess(QtCore.QObject):
     #: Signal emitted when current scan has finished (either after all work is done or after a stop request).
     finished = QtCore.pyqtSignal()
 
-    def __init__(self, name, obj, values, process, level):
+    def __init__(self, name, obj, values, process, level, counter=None):
         """
         Create a scan process for a single axis.
 
@@ -1129,6 +1212,7 @@ class _ScanProcess(QtCore.QObject):
             values (Iterable[float | str]): Sequence of values to iterate over (elements are numeric or label strings).
             process (object): Nested process exposing ``start()`` and ``stop()``.
             level (int): Nesting level of this scan process (0 for innermost).
+            counter (_Counter | None): Counter for tracking scan indices. If None, no counting is performed.
         """
         super().__init__()
         self._name = name
@@ -1137,6 +1221,7 @@ class _ScanProcess(QtCore.QObject):
         self._process = process
         self._index = 0
         self._level = level
+        self._counter = counter if counter is not None else _Counter()
         self._mask = None
         self._shouldStop = False
         self._finished = False
@@ -1155,6 +1240,8 @@ class _ScanProcess(QtCore.QObject):
         self._index = 0
         self._shouldStop = False
         self._finished = False
+        # Reset counter when starting
+        self._counter.reset()
         self._next()
 
     def _next(self):
@@ -1183,6 +1270,7 @@ class _ScanProcess(QtCore.QObject):
 
         value = self._values[self._index]
         self._obj.set(**{self._name: value}, wait=True)
+        self._counter.increment()
         if self._mask is not None and self._level > 0 and self._level == len(self._mask.shape) - 1:
             self._process.setMask(self._mask[self._index])
         self._index += 1
