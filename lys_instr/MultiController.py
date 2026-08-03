@@ -197,7 +197,8 @@ class MultiControllerInterface(HardwareInterface):
                 return
             self.busyStateChanged.connect(on_busy_changed, QtCore.Qt.QueuedConnection)
         loop.exec_()
-        
+        self.busyStateChanged.disconnect(on_busy_changed)
+
     @property
     def isBusy(self):
         """
