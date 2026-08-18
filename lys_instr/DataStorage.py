@@ -170,8 +170,8 @@ class DataStorage(QtCore.QObject):
             }
         self._detectors[detector]["connected"] = True
 
-        detector.dataAcquired.connect(self._detectors[detector]["dataAcquired"])
-        detector.busyStateChanged.connect(self._detectors[detector]["busyStateChanged"])
+        detector.dataAcquired.connect(self._detectors[detector]["dataAcquired"], QtCore.Qt.DirectConnection)
+        detector.busyStateChanged.connect(self._detectors[detector]["busyStateChanged"], QtCore.Qt.DirectConnection)
         detector.stopped.connect(self._detectors[detector]["stopped"])
         detector.retried.connect(self._detectors[detector]["retried"])
 

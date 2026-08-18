@@ -177,7 +177,7 @@ class DetectorInterface(HardwareInterface):
         """
         if not self._busy:
             return
-
+        
         self._stop()
 
         if self._thread is not None and self._thread.isRunning():
