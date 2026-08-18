@@ -670,7 +670,7 @@ class _MaskSelector(QtWidgets.QWidget):
         h.addWidget(self._mask_path_le)
         h.addWidget(self._browse_btn)
         v.addLayout(h)
-        self.setLayout(v)
+        # self.setLayout(v)
 
         self._toggle_mask_widgets(self._use_mask_cb.isChecked())
         self._use_mask_cb.toggled.connect(self._toggle_mask_widgets)
@@ -800,12 +800,12 @@ class ScanWidget(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(label)
         layout.addWidget(self._list)
-        layout.addWidget(self._maskSelector)
+        # layout.addWidget(self._maskSelector)
         layout.addWidget(processBox)
         self._nameBox = _FileNameBox(self._list)
         layout.addWidget(self._nameBox)
         layout.addLayout(btnsLayout)
-        layout.addStretch()
+        # layout.addStretch()
 
         self.setLayout(layout)
 
